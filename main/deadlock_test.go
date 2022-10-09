@@ -12,7 +12,7 @@ var (
 
 func TestMain(m *testing.M) {
 	// 初始化 gorm，创建 t_deadlock 表
-	StartGorm(MYSQL_5_7_38, Deadlock{})
+	StartGorm(MYSQL_5_7_39, Deadlock{})
 
 	// 初始化 t_deadlock 表数据
 	for _, column := range initData {
