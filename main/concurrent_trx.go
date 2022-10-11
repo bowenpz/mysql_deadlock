@@ -12,10 +12,10 @@ import (
 var ErrRollback = errors.New("rollback transaction")
 
 type ConcurrentTrx struct {
-	Rollback       bool                        // 是否在返回前回滚
-	IgnoreDeadlock bool                        // 是否忽略死锁
-	ExecSeq        []int                       // 数组中的正数代表事务下标，负数代表等待时间（秒）
-	TrxSQLList     [][]func(tx *gorm.DB) error // 每个事务要执行哪些 SQL
+	RollbackFinally bool                        // 是否在返回前回滚
+	IgnoreDeadlock  bool                        // 是否忽略死锁
+	ExecSeq         []int                       // 数组中的正数代表事务下标，负数代表等待时间（秒）
+	TrxSQLList      [][]func(tx *gorm.DB) error // 每个事务要执行哪些 SQL
 }
 
 func (c *ConcurrentTrx) AddSQL(trxIndex int, sql func(tx *gorm.DB) error) {
@@ -28,6 +28,12 @@ func (c *ConcurrentTrx) AddSQL(trxIndex int, sql func(tx *gorm.DB) error) {
 
 func (c *ConcurrentTrx) Wait(t time.Duration) {
 	c.ExecSeq = append(c.ExecSeq, -int(t.Seconds()))
+}
+
+func (c *ConcurrentTrx) Rollback(trxIndex int) {
+	c.AddSQL(trxIndex, func(tx *gorm.DB) error {
+		return ErrRollback
+	})
 }
 
 func (c *ConcurrentTrx) Execute() {
@@ -43,15 +49,19 @@ func (c *ConcurrentTrx) Execute() {
 		trxExecWaitChanList = append(trxExecWaitChanList, make(chan int, 1))
 	}
 
+	// 遍历所有事务
 	for trxIndex, sqlList := range c.TrxSQLList {
 		if len(sqlList) != 0 {
 			wg.Add(1)
 
 			sqlList := sqlList
 			trxIndex := trxIndex
+
+			// 每个事务起一个 goroutine
 			go func() {
 				err := db.Transaction(func(tx *gorm.DB) error {
 					for sqlIndex, sqlFunc := range sqlList {
+						// 阻塞等待，直到收到信号才执行，以此控制多个事务之间的先后顺序
 						<-trxExecWaitChanList[trxIndex]
 
 						err := sqlFunc(tx)
@@ -62,7 +72,7 @@ func (c *ConcurrentTrx) Execute() {
 						trxExecDoneChan <- 1
 					}
 
-					if c.Rollback {
+					if c.RollbackFinally {
 						return ErrRollback
 					}
 					return nil
@@ -84,7 +94,7 @@ func (c *ConcurrentTrx) Execute() {
 		}
 	}
 
-	// execute transaction SQLs sequentially
+	// 按顺序让多个事务执行 SQL，一个事务执行 SQL 成功之后（或者超时），再让下一个事务执行 SQL
 	for _, seq := range c.ExecSeq {
 		if seq > 0 {
 			trxExecWaitChanList[seq] <- 1

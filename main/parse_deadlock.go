@@ -23,7 +23,7 @@ type TrxWithLock struct {
 }
 
 func (t TrxWithLock) print() {
-	title := fmt.Sprintf("TRANSACTIONS  %s", t.TrxID)
+	title := fmt.Sprintf("TRANSACTION  %s", t.TrxID)
 	line := ""
 	for i := 0; i < len(title); i++ {
 		line += "-"
